@@ -1,0 +1,315 @@
+---
+title: "Day 5 afternoon"
+output: html_document
+---
+
+
+```{r}
+library(psych)
+library(QME)
+library(semPlot)
+library(tidyverse)
+library(lavaan)
+library(semTools)
+
+
+```
+
+## CFA dichotomous
+
+```{r}
+sim_mod_for_bin <- '
+## Measurement model
+f1 =~ 0.8*i1 + 0.8*i2 + 0.8*i3 
+f2 =~ 0.8*i4 + 0.5*i5 + 0.9*i6 
+f3 =~ 0.5*i7 + 0.4*i8 + 0.8*i9
+
+## Latent variance
+f1 ~~ 1*f1
+f2 ~~ 1*f2
+f3 ~~ 1*f3
+
+## Latent covariances
+f1 ~~ 0.4*f2
+f1 ~~ 0.3*f3
+f2 ~~ 0.2*f3
+
+
+## Residual variances for items
+i1 ~~ (1 - 0.8^2)*i1
+i2 ~~ (1 - 0.8^2)*i2
+i3 ~~ (1 - 0.8^2)*i3
+i4 ~~ (1 - 0.8^2)*i4
+i5 ~~ (1 - 0.5^2)*i5
+i6 ~~ (1 - 0.9^2)*i6
+i7 ~~ (1 - 0.5^2)*i7
+i8 ~~ (1 - 0.4^2)*i8
+i9 ~~ (1 - 0.8^2)*i9
+'
+```
+
+```{r}
+set.seed(320)
+simDat_3fact = simulateData(sim_mod_for_bin, sample.nobs = 5000)
+
+cor(simDat_3fact)
+```
+
+
+```{r}
+cutoffs <- c(i1 = -0.5,
+    i2 = -0.375,
+    i3 = -0.25,
+    i4 = -0.125,
+    i5 = 0,
+    i6 = 0.125,
+    i7 = 0.25,
+    i8 = 0.375,
+    i9 = 0.5)
+
+dichotomize = function(col) {
+  as.numeric(simDat_3fact[[col]] > cutoffs[[col]])
+}
+
+sim_binary = lapply(names(simDat_3fact), dichotomize) %>% 
+  as.data.frame()
+
+names(sim_binary) = names(simDat_3fact)
+
+```
+
+```{r}
+sim_binary %>% 
+  analyze %>% 
+  report("sim_binary")
+```
+
+```{r}
+measure_hypoth_3 = "
+  f1 =~ i1 + i2 + i3 
+  f2 =~ i4 + i5 + i6 
+  f3 =~ i7 + i8 + i9
+"
+
+```
+
+```{r}
+cfa_binary = cfa(measure_hypoth_3, sim_binary, ordered = names(sim_binary),
+                 estimator = "WLSMV")
+
+summary(cfa_binary, standardized = TRUE, fit.measures = TRUE)
+```
+## SEM
+
+```{r}
+sim_mod_for_sem <- '
+## Measurement model
+f1 =~ 0.8*i1 + 0.8*i2 + 0.8*i3 
+f2 =~ 0.8*i4 + 0.5*i5 + 0.9*i6 
+f3 =~ 0.5*i7 + 0.4*i8 + 0.8*i9
+
+## Structural model
+f1 ~ 0.4*f2
+f1 ~ 0.3*f3
+
+
+## Latent variance
+f1 ~~ 1*f1
+f2 ~~ 1*f2
+f3 ~~ 1*f3
+
+## Latent covariances
+f2 ~~ 0.2*f3
+
+
+## Residual variances for items
+i1 ~~ (1 - 0.8^2)*i1
+i2 ~~ (1 - 0.8^2)*i2
+i3 ~~ (1 - 0.8^2)*i3
+i4 ~~ (1 - 0.8^2)*i4
+i5 ~~ (1 - 0.5^2)*i5
+i6 ~~ (1 - 0.9^2)*i6
+i7 ~~ (1 - 0.5^2)*i7
+i8 ~~ (1 - 0.4^2)*i8
+i9 ~~ (1 - 0.8^2)*i9
+'
+
+```
+
+```{r}
+sim_mod_for_sem %>% 
+  lavaanify %>% 
+  semPaths(whatLabels = "par")
+```
+
+```{r}
+set.seed(141)
+
+simDat_sem = simulateData(sim_mod_for_sem, sample.nobs = 300)
+```
+
+
+```{r}
+measure_mod_sem = "
+  f1 =~ i1 + i2 + i3 
+  f2 =~ i4 + i5 + i6 
+  f3 =~ i7 + i8 + i9
+"
+full_mod_sem = "
+  ## Measurement Model
+  f1 =~ i1 + i2 + i3 
+  f2 =~ i4 + i5 + i6 
+  f3 =~ i7 + i8 + i9
+
+  ## Structural model
+  f1 ~ 0.4*f2
+  f1 ~ 0.3*f3
+"
+
+```
+
+
+```{r}
+sim_cfa_fit = cfa(measure_mod_sem, simDat_sem)
+
+summary(sim_cfa_fit,  standardized = TRUE, fit.measures = TRUE)
+```
+
+```{r}
+sim_sem_fit = sem(full_mod_sem, simDat_sem)
+
+summary(sim_sem_fit, standardized = TRUE, fit.measures = TRUE)
+```
+
+## Mean structures & measurement invariance
+
+```{r}
+sim_mod_mean <- '
+## Measurement model
+f1 =~ 0.8*i1 + 0.8*i2 + 0.8*i3 
+f2 =~ 0.8*i4 + 0.5*i5 + 0.9*i6 
+f3 =~ 0.5*i7 + 0.4*i8 + 0.8*i9
+
+## Latent variance
+f1 ~~ 1*f1
+f2 ~~ 1*f2
+f3 ~~ 1*f3  
+
+## Latent covariances
+f1 ~~ 0.4*f2
+f1 ~~ 0.3*f3
+f2 ~~ 0.2*f3
+
+
+## Residual variances for items
+i1 ~~ (1 - 0.8^2)*i1
+i2 ~~ (1 - 0.8^2)*i2
+i3 ~~ (1 - 0.8^2)*i3
+i4 ~~ (1 - 0.8^2)*i4
+i5 ~~ (1 - 0.5^2)*i5
+i6 ~~ (1 - 0.9^2)*i6
+i7 ~~ (1 - 0.5^2)*i7
+i8 ~~ (1 - 0.4^2)*i8
+i9 ~~ (1 - 0.8^2)*i9
+
+## Intercepts
+f1 ~ 1
+f2 ~ 1
+f3 ~ 1
+'
+
+```
+
+```{r}
+sim_mod_mean %>% 
+  lavaanify %>% 
+  semPaths(whatLabels = "par")
+```
+
+```{r}
+
+## Example copied from 
+HS_mean_mod = '
+  # three-factor model
+   visual =~ x1 + x2 + x3
+  textual =~ x4 + x5 + x6
+  speed   =~ x7 + x8 + x9
+'
+
+```
+
+```{r}
+fit_mod_all <- cfa(HS_mean_mod, 
+           data = HolzingerSwineford1939, 
+           meanstructure = TRUE)
+
+summary(fit_mod_all, fit.measures = T, standardized = TRUE)
+
+```
+
+What about differences in group?
+
+### Configural
+
+Test by group 
+```{r}
+
+fit_mod_config <- cfa(HS_mean_mod, 
+           data = HolzingerSwineford1939, 
+           group = "school",
+           meanstructure = TRUE)
+
+summary(fit_mod_config , fit.measures = T, standardized = TRUE)
+
+```
+
+### Metric
+
+```{r}
+
+fit_mod_metric <- cfa(HS_mean_mod, 
+           data = HolzingerSwineford1939, 
+           group = "school",
+           meanstructure = TRUE,
+           group.equal = "loadings")
+
+summary(fit_mod_metric , fit.measures = T, standardized = TRUE)
+```
+
+```{r}
+anova(fit_mod_config, fit_mod_metric)
+```
+
+### Scalar
+
+```{r}
+fit_mod_scalar <- cfa(HS_mean_mod, 
+           data = HolzingerSwineford1939, 
+           group = "school",
+           meanstructure = TRUE,
+           group.equal = c("loadings", "intercepts"))
+
+
+summary(fit_mod_scalar , fit.measures = T, standardized = TRUE)
+```
+
+```{r}
+anova(fit_mod_metric, fit_mod_scalar)
+```
+### Strict
+
+```{r}
+fit_mod_strict <- cfa(HS_mean_mod, 
+           data = HolzingerSwineford1939, 
+           group = "school",
+           meanstructure = TRUE,
+           group.equal =  c("loadings", "intercepts", "residuals"))
+
+summary(fit_mod_strict , fit.measures = T, standardized = TRUE)
+```
+
+```{r}
+anova(fit_mod_scalar, fit_mod_strict)
+```
+
+
