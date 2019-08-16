@@ -1,0 +1,497 @@
+---
+title: "Day 5 Code"
+author: "Ethan Brown"
+date: "August 10, 2019"
+output: html_document
+---
+
+## Side note: installing packages from github
+
+Uncomment and run this chunk to install package "QME".
+```{r eval=FALSE}
+# library(devtools)
+# install_github("zief0002/QME")
+```
+
+Load other packages
+```{r}
+library(tidyverse)
+library(QME)
+library(lavaan)
+library(psych)
+library(semPlot)
+library(psych)
+library(broom)
+
+```
+
+## Scoring items from surveys
+
+Look at built-in "math" dataset from QME package
+
+```{r}
+
+math
+
+```
+
+Yikes, this is multiple choice, how do we analyze this?
+
+We have a guide here:
+
+```{r}
+math_key
+```
+
+These are the correct answers.
+
+A base R approach -- easiest to loop over the names and match up by name.
+
+Note: WAY better to have these already in R as objects.  Principle of separating data and manipulation.  We could do this by a million ifelse statements but that is very clumsy.
+
+How would we do one column?
+```{r}
+
+col = "item3"
+math[[col]] 
+
+math_key[[col]]
+math[[col]] %in% math_key[[col]]
+
+as.numeric(math[[col]] %in% math_key[[col]])
+```
+
+
+```{r}
+rescore_column <- function(col) {
+  as.numeric(math[[col]] %in% math_key[[col]])
+}
+
+math_scored = lapply(names(math)[-1], rescore_column) %>%
+  data.frame(math$id, .)
+
+names(math_scored) = names(math)
+
+math_scored
+
+
+```
+
+Another approach -- what if there are more complex recodings needed or, for instance, partial credit?  Again, better to find a way to store this externally as *data* and preserve the separation of data and code.
+
+
+```{r}
+math_key_partial = read_csv("math_key_with_partial_credit.csv")
+math_key_partial
+```
+
+Here we have columns for each items and there are various possible codings for each answer.
+
+Another option that I find a bit more transparent is to reshape everything to long and merge.  It's computationally inefficient but easy to conceptualize.
+
+```{r}
+
+math_long = math %>% 
+  gather(item, response, -id)
+
+math_key_partial_long = math_key_partial %>% 
+  gather(item, score, -response)
+
+math_merge_long = math_long %>% 
+  left_join(math_key_partial_long, by = c("response", "item"))
+
+math_scored_2 = math_merge_long %>% 
+  select(-response) %>% 
+  spread(item, score)
+
+```
+
+There's other approaches as well, but these are the easiest that I know of.
+
+The QME package does this scoring for you.  It returns an object `QMEtest` that includes the scored items under `$keyed_test`. Unfortunately it doesn't handle tibbles very well.
+
+```{r}
+library(QME)
+
+math_QME = QMEtest(math, math_key_partial %>% as.data.frame)
+
+math_scored2 = math_QME$keyed_test
+
+
+```
+
+## Basic psychometrics
+The QME package also provides an *item analysis* report of a test with basic psychometrics, which it outputs to an HTML or other document.
+
+```{r}
+math_analysis = analyze(math, math_key)
+math_analysis
+
+```
+
+```{r}
+report(math_analysis, report_filename = "math_report")
+```
+
+
+We can also get other reliabilities from the `psych` package, once the test is scored.
+
+```{r}
+splitHalf(math_scored)
+
+```
+
+```{r}
+alpha(math_scored)
+
+```
+
+
+## Simulating data using `lavaan`
+
+We can simulate data, assuming a single *latent factor*, and look at these item statistics.
+
+
+
+```{r}
+demo.model <- '
+## Measurement model
+f =~ 0.05*i1 + 0.1*i2 + 0.3*i3 + 0.4*i4 + 0.5*i5 + 0.9*i6
+
+## Latent variance
+f ~~ 1*f
+
+## Residual variances for items
+
+i1 ~~ (1 - 0.05^2)*i1
+i2 ~~ (1 - 0.1^2)*i2
+i3 ~~ (1 - 0.3^2)*i3
+i4 ~~ (1 - 0.4^2)*i4
+i5 ~~ (1 - 0.5^2)*i5
+i6 ~~ (1 - 0.9^2)*i6
+'
+```
+
+What does all that mean? Let's visualize this model:
+
+```{r}
+demo.model %>% 
+  lavaanify %>% 
+  semPaths(whatLabels = "par")
+
+```
+
+```{r}
+set.seed(113)
+
+simDat = simulateData(demo.model, sample.nobs = 200)
+
+summary(simDat)
+```
+
+```{r}
+analyze_simDat = analyze(simDat) 
+
+report(analyze_simDat,  "First_simulation")
+```
+## Analyzing simulated data with CFA
+
+But wait!  We actually know a lot more about this.  We have a theory so let's fit this using a CFA. 
+
+We specify everything just the same way as we did before, but without specifying the actual parameters.
+
+
+```{r}
+fit_model <- '
+## Measurement model
+## We can define the name of the latent factor to be anything we want here
+humility =~ i1 + i2 + i3 + i4 + i5 + i6
+
+## Latent variance
+humility ~~ humility
+
+## Residual variances for items
+
+i1 ~~ i1
+i2 ~~ i2
+i3 ~~ i3
+i4 ~~ i4
+i5 ~~ i5
+i6 ~~ i6
+'
+
+```
+
+Let's fit a CFA -- that allows us to actually fit this model.  We can do this a couple ways, let's use the `lavaan` function.
+
+
+```{r}
+sim_cfa_results <- cfa(fit_model, simDat)
+
+summary(sim_cfa_results, standardized = TRUE, fit.measures = T)
+```
+
+```{r}
+resid(sim_cfa_results, type = "cor")
+```
+
+Looking for residuals with absolute values bigger than 1.
+
+```{r}
+fitmeasures(sim_cfa_results)[c("chisq", "df", "pvalue", "cfi", "rmsea", "srmr")]
+```
+
+Note fit is great, estimated reliability is horrible.
+
+```{r}
+parameterEstimates(sim_cfa_results, standardized = T)
+```
+
+
+lavaan already has relatively tidy output; I don't recommend broom for lavaan objects.
+
+And yes, you can get modification indices if you really want.  Modifications to a CFA should be theoretically justified so don't just chase sampling error!  :-P
+
+```{r}
+modificationIndices(sim_cfa_results)
+
+```
+
+
+## CHALLENGE: Getting parameters
+
+Create a data frame (or tibble) of the parameters where `std.all` is less than 0.3.
+
+```{r}
+
+```
+
+
+## show shiny app here about fit.
+
+## Creating the fit mystery!
+
+  1. Go to https://pad.riseup.net/p/far_models-tmp
+  2. Find your first name.
+  3. Change the coefficients on the model to whatever you want, between 0 and 1.
+  4. Change the variances to match your coefficients.
+
+## CHALLENGE: FactorMind!
+
+```{r}
+source("https://pad.riseup.net/p/far_models-tmp/export/txt")
+
+chosen_mystery_person = sample(names(mystery_mods_1), 1)
+
+mysteryData1 = simulateData(mystery_mods_1[chosen_mystery_person], 
+                            sample.nobs = 250)
+
+
+```
+
+  1. Generate basic psychometrics using QME `analyze` and `report`.  How reliable is this mystery scale?  What are the best items?
+  2. Create a new CFA model, called `fit_factormind_1`.  You can alter `fit_model` to make sure there are eight items. Make sure to NOT specify any of the numeric values of loadings or variances!
+  3. Fit your CFA model, show the summary.  Evaluate local fit with the residuals and the global fit.
+  
+## Multiple factors and comparing models
+
+What if our true model has three correlated factors?
+
+```{r}
+sim_model_3_factors <- '
+## Measurement model
+f1 =~ 0.5*i1 + 0.3*i2 + 0.3*i3 
+f2 =~ 0.4*i4 + 0.5*i5 + 0.9*i6 
+f3 =~ 0.5*i7 + 0.4*i8 + 0.2*i9
+
+## Latent variance
+f1 ~~ 1*f1
+f2 ~~ 1*f2
+f3 ~~ 1*f3
+
+## Latent covariances
+f1 ~~ 0.4*f2
+f1 ~~ 0.3*f3
+f2 ~~ 0.2*f3
+
+
+## Residual variances for items
+i1 ~~ (1 - 0.5^2)*i1
+i2 ~~ (1 - 0.3^2)*i2
+i3 ~~ (1 - 0.3^2)*i3
+i4 ~~ (1 - 0.4^2)*i4
+i5 ~~ (1 - 0.5^2)*i5
+i6 ~~ (1 - 0.9^2)*i6
+i7 ~~ (1 - 0.5^2)*i7
+i8 ~~ (1 - 0.4^2)*i8
+i9 ~~ (1 - 0.2^2)*i9
+'
+```
+
+```{r}
+set.seed(320)
+simDat_3fact = simulateData(sim_model_3_factors, sample.nobs = 150)
+
+cor(simDat_3fact)
+```
+
+```{r}
+simDat_3fact %>% 
+  analyze %>% 
+  report("three_factor_psychometrics")
+```
+
+Now, suppose we have three competing hypotheses about this data.  We can be less verbose about specifying these models because `cfa()` automatically estimates the covariances and residual covariances, we can just specify the measurement model.
+
+```{r}
+measure_hypoth_1 = "
+  f1 =~ i1 + i2 + i3 + i4 + i5 + i6 + i7 + i8 + i9
+"
+
+measure_hypoth_2 = "
+  f1 =~ i1 + i2 + i3 + i4 + i5 
+  f2 =~ i4 + i5 + i6 + i7 + i8 + i9
+"
+
+measure_hypoth_3 = "
+  f1 =~ i1 + i2 + i3 
+  f2 =~ i4 + i5 + i6 
+  f3 =~ i7 + i8 + i9
+"
+
+
+```
+
+Let's see these models!
+
+```{r}
+
+mod_hypoth_1 = cfa(measure_hypoth_1, simDat_3fact)
+mod_hypoth_2 = cfa(measure_hypoth_2, simDat_3fact)
+mod_hypoth_3 = cfa(measure_hypoth_3, simDat_3fact)
+
+
+```
+
+```{r}
+summary(mod_hypoth_1, fit.measures = TRUE, standardized = T)
+```
+
+```{r}
+summary(mod_hypoth_2, fit.measures = TRUE, standardized = T)
+```
+
+
+```{r}
+summary(mod_hypoth_3, fit.measures = TRUE, standardized = T)
+```
+
+
+## Creating the next fit mystery!
+
+  1. Go to https://pad.riseup.net/p/far_models_2-tmp
+  2. Find your first name.
+  3. Change the coefficients on the model to whatever you want, between 0 and 1.
+  4. Change the variances to match your coefficients.
+
+## CHALLENGE: FactorMind 2!
+
+```{r}
+set.seed(NULL)
+source("https://pad.riseup.net/p/far_models_2-tmp/export/txt")
+
+chosen_mystery_person = sample(names(mystery_mods_1), 1)
+
+mysteryData2 = simulateData(mystery_mods_1[chosen_mystery_person], 
+                            sample.nobs = 250)
+
+
+```
+
+  1. Generate basic psychometrics using QME `analyze` and `report`.  How reliable is this mystery scale, when considered as one scale?  What are the best items?
+  2. Create THREE new CFA models.  Again, make sure to NOT specify any of the numeric values of loadings or variances!
+      a. Model 1 is a unidimensional model: all 9 items load onto one factor.
+      b. Model 2 has two factors: one with the even items and one with the odd items.
+      c. Model 3 has three factors: one with items 1, 4, 7; one with items 2, 5, 8; and one with items 3, 6, 9.
+  3. Fit your CFA models. Evaluate local and global fit.  Which model do you think is the true one?
+  
+  
+  
+## Exploratory factor analysis
+
+We needed fairly solid theories in order to use CFA.  What if we really have no idea?
+
+Then we're in the land of EFA.
+
+I strongly recommend the `psych` package for this.
+
+First, we need to figure out how many factors to extract.
+
+```{r}
+scree(simDat_3fact)
+```
+
+```{r}
+fa.parallel(simDat_3fact)
+```
+
+
+```{r}
+VSS(simDat_3fact)
+```
+
+Factors = somewhere between 2 and 4? Also we have an "ultra heywood case". Let's say 4 just for fun.
+
+```{r}
+out_minres_promax_4 = fa(simDat_3fact, nfactors = 4, fm = "minres", rotate = "promax")
+
+out_minres_promax_4
+```
+
+What about the 3 factor solution?
+
+```{r}
+out_minres_promax_3 = fa(simDat_3fact, nfactors = 3, fm = "minres", rotate = "promax")
+
+out_minres_promax_3
+```
+
+
+We can also get predicted values.
+
+```{r}
+factor_scores = predict(object = out_minres_promax_3, data = simDat_3fact)
+```
+
+
+## Creating the next fit mystery!
+
+  1. Go BACK to https://pad.riseup.net/p/far_models_2-tmp
+  2. Find your first name.
+  3. Change the factor structure and coefficients however you want.  For instance, you could add more factors, have less factors.  Make sure whatever you create uses all 9 items, that all factors have at least one item, and that you set the factor variances and covariances.
+  
+## Mini-Capstone: Ultra FactorMind!
+
+```{r}
+set.seed(NULL)
+source("https://pad.riseup.net/p/far_models_2-tmp/export/txt")
+
+chosen_mystery_person = sample(names(mystery_mods_1), 1)
+
+mysteryData3_efa = simulateData(mystery_mods_1[chosen_mystery_person], 
+                            sample.nobs = 1000)
+
+mysteryData3_cfa = simulateData(mystery_mods_1[chosen_mystery_person], 
+                            sample.nobs = 1000)
+
+
+```
+
+  1. Generate basic psychometrics using QME `analyze` and `report`.  How reliable is this mystery scale, when considered as one scale?  What are the best items?
+  
+ 2. Do an EFA on `mysteryData3_efa`.  Determine how many factors you think there are, and fit an EFA -- I suggest `minres` extraction and `promax` rotation.
+ 
+ 3.  What items seem to be on which factors?
+ 
+ 4. Create a CFA model based on the results of your CFA.  Fit the CFA and report global and local fit.
+

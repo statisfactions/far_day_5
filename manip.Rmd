@@ -1,0 +1,144 @@
+---
+title: "Measures of Fit activity"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup
+```{r eval = F}
+## run this just once to get the packages
+install.packages(c("corrplot", "manipulate"))
+
+```
+
+```{r setup}
+library(lavaan)
+library(manipulate)
+library(corrplot)
+
+tr = function (m) { #calc the trace of a matrix
+  sum(diag(m))
+}
+
+discrepancy = function(obs, mod) {
+ ## Calculate the ML discrepancy statistic, "F", between the observed and
+ ## model-implied covariance matrices
+  log(det(obs)) + tr(mod %*% solve(obs)) - log(det(mod)) - length(diag(obs))
+}
+
+
+## Sample original covariance matrix
+source_cov = cov(HolzingerSwineford1939[, c("x1", "x4", "x7")])
+
+srmr = function(obs, mod) {
+  ## Calculate SRMR; based on https://stats.stackexchange.com/questions/235872/what-is-the-formula-for-standardized-root-mean-residual-srmr-in-the-context-of
+  lobs <-  cov2cor(obs)[!lower.tri(obs)]
+  limp <-  cov2cor(mod)[!lower.tri(mod)]
+  sqrt(mean((limp - lobs)^2))
+}
+
+MAD_cor = function(obs, mod) {
+  ## mean absolute correlation difference
+  lobs <-  cov2cor(obs)[!lower.tri(obs)]
+  limp <-  cov2cor(mod)[!lower.tri(mod)]
+  mean(abs(limp - lobs))
+}
+
+
+## Baseline (independence)  covariance matrix -----
+## diag() on a matrix returns a vector of the diagonal entries;
+## diag() on a vector creates a matrix that has that diagonal
+## Therefore diag(diag(matrix)) just sets everything besides the diagonal to 0
+baseline_cov = diag(diag(source_cov))
+baseline_F = discrepancy(source_cov, baseline_cov)
+baseline_df = choose(nrow(source_cov), 2) # number of elements off diagonal
+
+```
+
+
+## Manipulate the chi-square
+
+```{r}
+
+
+manipulate({
+  covmat = getCov(c(0, xy, 0, xz, yz, 0)) # get correlation differences
+  cor_mod = cov2cor(source_cov) - covmat # calculate model-implied correlation
+  cov_mod = cor2cov(cor_mod, sqrt(diag(source_cov))) # model-implied covariance
+  calc_F = discrepancy(source_cov, cov_mod) # model discrepancy
+  calc_chisq = n * calc_F # model chi-square
+  pvalue = pchisq(calc_chisq, df, lower.tail = FALSE) # chi-square p-value
+  
+  ## Plot local fit and chi-square distribution
+  par(mfrow = c(1, 2))
+  corrplot(covmat, 
+           addCoef.col = "black",
+           title = paste0("Chisq=", round(calc_chisq, 1), " df=", df, " p=", round(pvalue, 3)),
+           mar=c(0,0,1,0))
+  par(mar = c(5, 2, 10, 2))
+  curve(dchisq(x, df), from = 0, to = max(calc_chisq, df*4), main = "Chi-square distribution")
+  abline(v = calc_chisq)
+},
+xy = slider(-.3, .3, 0),
+xz = slider(-.3, .3, 0),
+yz = slider(-.3, .3, 0),
+df = slider(0, 5, 2),
+n = slider(100, 1500, 200))
+
+```
+
+## With other global fit measures
+Conceptually, SRMR is an average correlation difference; I've included a made-up statistic, the MAD cor, which is the mean absolute differences in the correlation matrices for comparison.
+
+Note how CFI changes as we change parameters, relative to the baseline model, but doesn't change that much based on sample size. "Deltas" are the difference between the chi-square statistic and the degrees of freedom.
+
+```{r}
+manipulate({
+  covmat = getCov(c(0, xy, 0, xz, yz, 0)) # get correlation differences
+  cor_mod = cov2cor(source_cov) - covmat # calculate model-implied correlation
+  cov_mod = cor2cov(cor_mod, sqrt(diag(source_cov))) # model-implied covariance
+  calc_F = discrepancy(source_cov, cov_mod) # model discrepancy
+  calc_chisq = n * calc_F # model chi-square
+  pvalue = pchisq(calc_chisq, df, lower.tail = FALSE) # chi-square p-value
+  baseline_chisq = n * baseline_F
+  baseline_pvalue = pchisq(baseline_chisq, df, lower.tail = FALSE) #baseline p-value
+  
+  model_delta = max(0, calc_chisq - df)
+  baseline_delta = baseline_chisq - baseline_df
+  
+  CFI = (baseline_delta - model_delta)/baseline_delta
+  SRMR = srmr(source_cov, cov_mod)
+  MAD = MAD_cor(source_cov, cov_mod)
+  RMSEA = sqrt(model_delta/(df * (n - 1)))
+  
+  ## Plot local fit and chi-square distribution
+  par(mfrow = c(1, 2))
+  corrplot(covmat, 
+           addCoef.col = "black",
+           mar=c(0,0,1,0))
+  title(sprintf("Chisq=%s, df=%s, p=%s\nBaseline Chisq=%s, df=%s, p=%s\nSRMR=%s, MAD cor=%s\nRMSEA=%s", 
+                           round(calc_chisq, 1), 
+                           df, 
+                           round(pvalue, 3),
+                           round(baseline_chisq, 1),
+                           baseline_df,
+                           round(baseline_pvalue, 3),
+                round(SRMR, 3),
+                round(MAD, 3),
+                round(RMSEA, 3)))
+  par(mar = c(5, 2, 10, 2))
+  curve(dchisq(x, df), from = 0, to = max(calc_chisq, df*4), 
+        main = sprintf("Chi-square distribution\nDeltas: Baseline=%s, Model=%s\nCFI = %s", 
+                       round(baseline_delta, 1), round(model_delta, 1),
+                       round(CFI,3)))
+  abline(v = calc_chisq)
+},
+xy = slider(-.3, .3, 0),
+xz = slider(-.3, .3, 0),
+yz = slider(-.3, .3, 0),
+df = slider(1, 2, 1),
+n = slider(100, 1500, 200))
+
+```
+
